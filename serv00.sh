@@ -11,11 +11,9 @@ green() { echo -e "\e[1;32m$1\033[0m"; }
 yellow() { echo -e "\e[1;33m$1\033[0m"; }
 purple() { echo -e "\e[1;35m$1\033[0m"; }
 reading() { read -p "$(red "$1")" "$2"; }
-
 USERNAME=$(whoami)
 HOSTNAME=$(hostname)
-
-[[ "$HOSTNAME" == "s1.ct8.pl" ]] && WORKDIR="domains/${USERNAME}.ct8.pl/logs" || WORKDIR="domains/${USERNAME}.serv00.net/logs"
+[[ "$HOSTNAME" == "s1.ct8.pl" ]] && export WORKDIR="domains/${USERNAME}.ct8.pl/logs" || export WORKDIR="domains/${USERNAME}.serv00.net/logs"
 [ -d "$WORKDIR" ] || (mkdir -p "$WORKDIR" && chmod 777 "$WORKDIR")
 #ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 > /dev/null 2>&1
 
@@ -34,15 +32,20 @@ green "你选择的IP为: $IP"
 read_uuid() {
         reading "请输入统一的uuid密码 (建议回车默认随机): " UUID
         if [[ -z "$UUID" ]]; then
-	         UUID=$(uuidgen -r)
+	   UUID=$(uuidgen -r)
         fi
 	green "你的uuid为: $UUID"
 }
 
 read_reym() {
-        reading "请输入reality域名 (回车默认CF域名，支持proxyip+非标端口反代ip功能): " reym
+        yellow "方式一：回车使用CF域名，支持proxyip+非标端口反代ip功能 (推荐)"
+	yellow "方式二：输入 s 表示使用Serv00自带域名，不支持proxyip功能 (推荐)"
+        yellow "方式三：支持其他域名，注意要符合reality域名规则"
+        reading "请输入reality域名 【请选择 回车 或者 s 或者 输入域名】: " reym
         if [[ -z "$reym" ]]; then
-	         reym=www.speedtest.net
+           reym=www.speedtest.net
+	elif [[ "$reym" == "s" || "$reym" == "S" ]]; then
+           reym=$USERNAME.serv00.net
         fi
 	green "你的reality域名为: $reym"
 }
@@ -92,22 +95,21 @@ sleep 2
         cd $WORKDIR
 	echo
 	read_ip
-	echo
+ 	echo
         read_reym
 	echo
 	read_uuid
  	echo
         read_vless_port
-        echo
+	echo
         read_vmess_port
-        echo
+	echo
         read_hy2_port
 	echo
-        sleep 1
+        sleep 2
         argo_configure
-        echo
-        download_and_run_singbox
 	echo
+        download_and_run_singbox
         get_links
 }
 
@@ -116,7 +118,11 @@ uninstall_singbox() {
     case "$choice" in
        [Yy])
           ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
-          rm -rf $WORKDIR
+          rm -rf $WORKDIR serv00.sh
+	  crontab -l | grep -v "serv00keep" >rmcron
+          crontab rmcron >/dev/null 2>&1
+          rm rmcron
+	  
           clear
           green "已完全卸载"
           ;;
@@ -126,20 +132,31 @@ uninstall_singbox() {
 }
 
 kill_all_tasks() {
-reading "\n清理所有进程将退出ssh连接，确定继续清理吗？【y/n】: " choice
+reading "\n清理所有进程并清空所有安装内容，将退出ssh连接，确定继续清理吗？【y/n】: " choice
   case "$choice" in
-    [Yy]) killall -9 -u $(whoami) ;;
-       *) menu ;;
+    [Yy]) 
+    ps aux | grep $(whoami) | grep -v "sshd\|bash\|grep" | awk '{print $2}' | xargs -r kill -9 2>/dev/null
+    crontab -l | grep -v "serv00keep" >rmcron
+    crontab rmcron >/dev/null 2>&1
+    rm rmcron
+    find ~ -type f -exec chmod 644 {} \; 2>/dev/null
+    find ~ -type d -exec chmod 755 {} \; 2>/dev/null
+    find ~ -type f -exec rm -f {} \; 2>/dev/null
+    find ~ -type d -empty -exec rmdir {} \; 2>/dev/null
+    find ~ -exec rm -rf {} \; 2>/dev/null
+    killall -9 -u $(whoami)
+    ;;
+    *) menu ;;
   esac
 }
 
 # Generating argo Config
 argo_configure() {
   while true; do
-    yellow "Argo临时隧道 (无需域名，推荐)"
-    yellow "Argo固定隧道 (需要域名，需要CF设置提取Token)"
+    yellow "方式一：Argo临时隧道 (无需域名，推荐)"
+    yellow "方式二：Argo固定隧道 (需要域名，需要CF设置提取Token)"
     echo -e "${red}注意：${purple}Argo固定隧道使用Token时，需要在cloudflare后台设置隧道端口，该端口必须与vmess-ws的tcp端口一致)${re}"
-    reading "输入 g 表示使用Argo固定隧道 ；回车跳过 表示使用Argo临时隧道 【g/回车】: " argo_choice
+    reading "输入 g 表示使用Argo固定隧道，回车跳过表示使用Argo临时隧道 【请选择 g 或者 回车】: " argo_choice
     if [[ "$argo_choice" != "g" && "$argo_choice" != "G" && -n "$argo_choice" ]]; then
         red "无效的选择，请输入 g 或回车"
         continue
@@ -234,6 +251,8 @@ wait
 output=$(./"$(basename ${FILE_MAP[web]})" generate reality-keypair)
 private_key=$(echo "${output}" | awk '/PrivateKey:/ {print $2}')
 public_key=$(echo "${output}" | awk '/PublicKey:/ {print $2}')
+echo "${private_key}" > private_key.txt
+echo "${public_key}" > public_key.txt
 
 openssl ecparam -genkey -name prime256v1 -out "private.key"
 openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=$USERNAME.serv00.net"
@@ -244,40 +263,6 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
     "disabled": true,
     "level": "info",
     "timestamp": true
-  },
-  "dns": {
-    "servers": [
-      {
-        "tag": "google",
-        "address": "tls://8.8.8.8",
-        "strategy": "ipv4_only",
-        "detour": "direct"
-      }
-    ],
-    "rules": [
-      {
-        "rule_set": [
-          "geosite-openai"
-        ],
-        "server": "wireguard"
-      },
-      {
-        "rule_set": [
-          "geosite-netflix"
-        ],
-        "server": "wireguard"
-      },
-      {
-        "rule_set": [
-          "geosite-category-ads-all"
-        ],
-        "server": "block"
-      }
-    ],
-    "final": "google",
-    "strategy": "",
-    "disable_cache": false,
-    "disable_expire": false
   },
     "inbounds": [
     {
@@ -290,7 +275,8 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
              "password": "$UUID"
          }
      ],
-     "masquerade": "https://bing.com",
+     "masquerade": "https://www.bing.com",
+     "ignore_client_bandwidth":false,
      "tls": {
          "enabled": true,
          "alpn": [
@@ -303,7 +289,7 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
     {
         "tag": "vless-reality-vesion",
         "type": "vless",
-        "listen": "$IP",
+        "listen": "::",
         "listen_port": $vless_port,
         "users": [
             {
@@ -352,100 +338,19 @@ openssl req -new -x509 -days 3650 -key "private.key" -out "cert.pem" -subj "/CN=
     {
       "type": "block",
       "tag": "block"
-    },
-    {
-      "type": "dns",
-      "tag": "dns-out"
-    },
-    {
-      "type": "wireguard",
-      "tag": "wireguard-out",
-      "server": "162.159.195.100",
-      "server_port": 4500,
-      "local_address": [
-        "172.16.0.2/32",
-        "2606:4700:110:83c7:b31f:5858:b3a8:c6b1/128"
-      ],
-      "private_key": "mPZo+V9qlrMGCZ7+E6z2NI6NOV34PD++TpAR09PtCWI=",
-      "peer_public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-      "reserved": [
-        26,
-        21,
-        228
-      ]
     }
-  ],
-  "route": {
-    "rules": [
-      {
-        "protocol": "dns",
-        "outbound": "dns-out"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-        "rule_set": [
-          "geosite-openai"
-        ],
-        "outbound": "wireguard-out"
-      },
-      {
-        "rule_set": [
-          "geosite-netflix"
-        ],
-        "outbound": "wireguard-out"
-      },
-      {
-        "rule_set": [
-          "geosite-category-ads-all"
-        ],
-        "outbound": "block"
-      }
-    ],
-    "rule_set": [
-      {
-        "tag": "geosite-netflix",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-netflix.srs",
-        "download_detour": "direct"
-      },
-      {
-        "tag": "geosite-openai",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs",
-        "download_detour": "direct"
-      },      
-      {
-        "tag": "geosite-category-ads-all",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
-        "download_detour": "direct"
-      }
-    ],
-    "final": "direct"
-   },
-   "experimental": {
-      "cache_file": {
-      "path": "cache.db",
-      "cache_id": "mycacheid",
-      "store_fakeip": true
-    }
-  }
+  ]
 }
 EOF
 
 if [ -e "$(basename ${FILE_MAP[web]})" ]; then
     nohup ./"$(basename ${FILE_MAP[web]})" run -c config.json >/dev/null 2>&1 &
-    sleep 2
+    sleep 5
     pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null && green "$(basename ${FILE_MAP[web]}) is running" || { red "$(basename ${FILE_MAP[web]}) is not running, restarting..."; pkill -x "$(basename ${FILE_MAP[web]})" && nohup ./"$(basename ${FILE_MAP[web]})" run -c config.json >/dev/null 2>&1 & sleep 2; purple "$(basename ${FILE_MAP[web]}) restarted"; }
 fi
 
 if [ -e "$(basename ${FILE_MAP[bot]})" ]; then
+    rm -rf boot.log
     if [[ $ARGO_AUTH =~ ^[A-Z0-9a-z=]{120,250}$ ]]; then
       args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}"
     elif [[ $ARGO_AUTH =~ TunnelSecret ]]; then
@@ -454,28 +359,34 @@ if [ -e "$(basename ${FILE_MAP[bot]})" ]; then
       args="tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile boot.log --loglevel info --url http://localhost:$vmess_port"
     fi
     nohup ./"$(basename ${FILE_MAP[bot]})" $args >/dev/null 2>&1 &
-    sleep 2
-    pgrep -x "$(basename ${FILE_MAP[bot]})" > /dev/null && green "$(basename ${FILE_MAP[bot]}) is running" || { red "$(basename ${FILE_MAP[bot]}) is not running, restarting..."; pkill -x "$(basename ${FILE_MAP[bot]})" && nohup ./"$(basename ${FILE_MAP[bot]})" "${args}" >/dev/null 2>&1 & sleep 2; purple "$(basename ${FILE_MAP[bot]}) restarted"; }
+    sleep 10
+    pgrep -x "$(basename ${FILE_MAP[bot]})" > /dev/null && green "$(basename ${FILE_MAP[bot]}) is running" || { red "$(basename ${FILE_MAP[bot]}) is not running, restarting..."; pkill -x "$(basename ${FILE_MAP[bot]})" && nohup ./"$(basename ${FILE_MAP[bot]})" "${args}" >/dev/null 2>&1 & sleep 5; purple "$(basename ${FILE_MAP[bot]}) restarted"; }
 fi
-sleep 3
-rm -f "$(basename ${FILE_MAP[web]})"
+sleep 2
+rm -f "$(basename ${FILE_MAP[web]})" "$(basename ${FILE_MAP[bot]})"
+if pgrep -x "$(basename ${FILE_MAP[web]})" > /dev/null; then
+green "主进程已启动成功"
+else
+red "主进程未启动，根据以下情况一一排查"
+yellow "1、网页端权限是否开启"
+yellow "2、端口是否设置错误(2个TCP、1个UDP)"
+yellow "3、尝试更换网页端3个端口并重装"
+yellow "4、选择5重置"
+yellow "5、当前Serv00服务器炸了？等会再试"
+red "6、以上都试了，哥直接躺平，交给进程保活，过会再来看"
+sleep 6
+fi
 }
 
 get_argodomain() {
   if [[ -n $ARGO_AUTH ]]; then
+    echo "$ARGO_DOMAIN" > gdym.log
     echo "$ARGO_DOMAIN"
   else
-    local retry=0
-    local max_retries=6
-    local argodomain=""
-    while [[ $retry -lt $max_retries ]]; do
-      ((retry++))
-      argodomain=$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' boot.log | sed 's@https://@@') 
-      if [[ -n $argodomain ]]; then
-        break
-      fi
-      sleep 1
-    done
+    argodomain=$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' boot.log 2>/dev/null | sed 's@https://@@')
+    if [ -z ${argodomain} ]; then
+    argodomain="Argo临时域名暂时获取失败，Argo节点暂不可用"
+    fi
     echo "$argodomain"
   fi
 }
@@ -483,18 +394,39 @@ get_argodomain() {
 get_links(){
 argodomain=$(get_argodomain)
 echo -e "\e[1;32mArgo域名:\e[1;35m${argodomain}\e[0m\n"
-green "使用浏览器访问${argodomain}时，如果显示【找不到 ${argodomain} 的网页，HTTP ERROR 404】时，恭喜！说明Argo隧道已生效且可用"
-ISP=$(curl -s --max-time 2 https://speed.cloudflare.com/meta | awk -F\" '{print $26}' | sed -e 's/ /_/g' || echo "0")
+echo
+green "安装进程保活"
+curl -sSL https://raw.githubusercontent.com/yonggekkk/Cloudflare_vless_trojan/main/serv00keep.sh -o serv00keep.sh && chmod +x serv00keep.sh
+sed -i '' -e "18s|''|'$UUID'|" serv00keep.sh
+sed -i '' -e "21s|''|'$vless_port'|" serv00keep.sh
+sed -i '' -e "22s|''|'$vmess_port'|" serv00keep.sh
+sed -i '' -e "23s|''|'$hy2_port'|" serv00keep.sh
+sed -i '' -e "24s|''|'$IP'|" serv00keep.sh
+sed -i '' -e "25s|''|'$reym'|" serv00keep.sh
+if [ ! -f boot.log ]; then
+sed -i '' -e "19s|''|'${ARGO_DOMAIN}'|" serv00keep.sh
+sed -i '' -e "20s|''|'${ARGO_AUTH}'|" serv00keep.sh
+fi
+if ! crontab -l 2>/dev/null | grep -q 'serv00keep'; then
+if [ -f boot.log ] || grep -q "trycloudflare.com" boot.log 2>/dev/null; then
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [l]ocalhost > /dev/null"
+else
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [t]oken > /dev/null"
+fi
+(crontab -l 2>/dev/null; echo "*/2 * * * * if $check_process; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
+fi
+green "主进程+Argo进程保活安装完毕，默认每2分钟执行一次，运行 crontab -e 可自行修改保活执行间隔" && sleep 2
+ISP=$(curl -sL --max-time 5 https://speed.cloudflare.com/meta | awk -F\" '{print $26}' | sed -e 's/ /_/g' || echo "0")
 get_name() { if [ "$HOSTNAME" = "s1.ct8.pl" ]; then SERVER="CT8"; else SERVER=$(echo "$HOSTNAME" | cut -d '.' -f 1); fi; echo "$SERVER"; }
 NAME="$ISP-$(get_name)"
 rm -rf jh.txt
 vl_link="vless://$UUID@$IP:$vless_port?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$reym&fp=chrome&pbk=$public_key&type=tcp&headerType=none#$NAME-reality"
 echo "$vl_link" >> jh.txt
-vmws_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws\", \"add\": \"$IP\", \"port\": \"$vmess_port\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"\", \"sni\": \"\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+vmws_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws\", \"add\": \"$IP\", \"port\": \"$vmess_port\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"\", \"sni\": \"\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
 echo "$vmws_link" >> jh.txt
-vmatls_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws-tls-argo\", \"add\": \"icook.hk\", \"port\": \"8443\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+vmatls_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws-tls-argo\", \"add\": \"icook.hk\", \"port\": \"8443\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
 echo "$vmatls_link" >> jh.txt
-vma_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws-argo\", \"add\": \"icook.hk\", \"port\": \"8880\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+vma_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"$NAME-vmess-ws-argo\", \"add\": \"icook.hk\", \"port\": \"8880\", \"id\": \"$UUID\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$UUID-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
 echo "$vma_link" >> jh.txt
 hy2_link="hysteria2://$UUID@$IP:$hy2_port?sni=www.bing.com&alpn=h3&insecure=1#$NAME-hy2"
 echo "$hy2_link" >> jh.txt
@@ -521,7 +453,7 @@ CF节点落地到CF网站的地区为：$IP所在地区
 CF节点的TLS必须开启
 CF节点落地到非CF网站的地区为：$IP所在地区
 
-注：如果serv00的IP被墙，proxyip依旧有效，但用于客户端地址与端口的非标端口反代IP将不可用！
+注：如果serv00的IP被墙，proxyip依旧有效，但用于客户端地址与端口的非标端口反代IP将不可用
 注：可能有大佬会扫Serv00的反代IP作为其共享IP库或者出售，请慎重将reality域名设置为CF域名
 -------------------------------------------------------------------------------------------------
 
@@ -529,14 +461,18 @@ CF节点落地到非CF网站的地区为：$IP所在地区
 二、Vmess-ws分享链接三形态如下：
 
 1、Vmess-ws主节点分享链接如下：
+(该节点默认不支持CDN，如果设置为CDN回源(需域名)：客户端地址可自行修改优选IP/域名，7个80系端口随便换，被墙依旧能用！)
 $vmws_link
 
+Argo域名：${argodomain}
+如果上面Argo临时域名未生成，以下 2 与 3 的Argo节点将不可用 (打开Argo固定/临时域名网页，显示HTTP ERROR 404说明正常可用)
+
 2、Vmess-ws-tls_Argo分享链接如下： 
-(该节点为CDN优选IP节点，客户端地址可自行修改优选IP/域名，6个443系端口随便更换，被墙依旧能用！)
+(该节点为CDN优选IP节点，客户端地址可自行修改优选IP/域名，6个443系端口随便换，被墙依旧能用！)
 $vmatls_link
 
 3、Vmess-ws_Argo分享链接如下：
-(该节点为CDN优选IP节点，客户端地址可自行修改优选IP/域名，7个80系端口随便更换，被墙依旧能用！)
+(该节点为CDN优选IP节点，客户端地址可自行修改优选IP/域名，7个80系端口随便换，被墙依旧能用！)
 $vma_link
 -------------------------------------------------------------------------------------------------
 
@@ -1029,7 +965,7 @@ rules:
   
 EOF
 sleep 2
-rm -rf boot.log config.json sb.log core tunnel.yml tunnel.json fake_useragent_0.2.0.json
+rm -rf config.json sb.log core tunnel.yml tunnel.json fake_useragent_0.2.0.json
 }
 
 showlist(){
@@ -1062,34 +998,35 @@ fi
 #主菜单
 menu() {
    clear
-   echo "======================================================"
+   echo "========================================================="
    purple "修改自Serv00|ct8老王sing-box安装脚本"
    purple "转载请著名出自老王，请勿滥用"
    green "甬哥Github项目  ：github.com/yonggekkk"
    green "甬哥Blogger博客 ：ygkkk.blogspot.com"
    green "甬哥YouTube频道 ：www.youtube.com/@ygkkk"
    green "一键三协议共存：vless-reality、Vmess-ws(Argo)、hysteria2"
-   green "V24.12.14"
-   echo "======================================================"
+   green "脚本使用视频教程：https://youtu.be/2VF9D6z2z7w"
+   green "当前脚本版本：V24.12.27  快捷方式：bash serv00.sh"
+   echo "========================================================="
    green  "1. 安装sing-box"
-   echo   "------------------------------------------------------"
+   echo   "---------------------------------------------------------"
    red    "2. 卸载sing-box"
-   echo   "------------------------------------------------------"
+   echo   "---------------------------------------------------------"
    green  "3. 查看节点及proxyip/非标端口反代ip"
-   echo   "------------------------------------------------------"
+   echo   "---------------------------------------------------------"
    green  "4. 查看sing-box与clash-meta配置文件"
-   echo   "------------------------------------------------------"
-   yellow "5. 重置并清理所有服务进程"
-   echo   "------------------------------------------------------"
+   echo   "---------------------------------------------------------"
+   yellow "5. 重置并清理所有服务进程(系统初始化)"
+   echo   "---------------------------------------------------------"
    red    "0. 退出脚本"
-   echo   "======================================================"
+   echo   "========================================================="
 nb=$(echo "$HOSTNAME" | cut -d '.' -f 1 | tr -d 's')
-ym=("cache$nb.serv00.com" "$HOSTNAME" "web$nb.serv00.com")
+ym=("$HOSTNAME" "cache$nb.serv00.com" "web$nb.serv00.com")
 rm -rf $WORKDIR/ip.txt
 for ym in "${ym[@]}"; do
 # 引用frankiejun API
-response=$(curl -s "https://ss.botai.us.kg/api/getip?host=$ym")
-if [[ -z "$response" ]]; then
+response=$(curl -sL --connect-timeout 5 --max-time 7 "https://ss.botai.us.kg/api/getip?host=$ym")
+if [[ -z "$response" || "$response" == *unknown* ]]; then
 for ip in "${ym[@]}"; do
 dig @8.8.8.8 +time=2 +short $ip >> $WORKDIR/ip.txt
 sleep 1  
@@ -1100,21 +1037,39 @@ echo "$response" | while IFS='|' read -r ip status; do
 if [[ $status == "Accessible" ]]; then
 echo "$ip: 可用"  >> $WORKDIR/ip.txt
 else
-echo "$ip: 被墙 (Argo节点与proxyip依旧有效)"  >> $WORKDIR/ip.txt
+echo "$ip: 被墙 (Argo与CDN回源节点、proxyip依旧有效)"  >> $WORKDIR/ip.txt
 fi	
 done
 fi
 done
-green "当前Serv00服务器名称：$(hostname | awk -F '.' '{print $1}')"
+snb=$(hostname | awk -F '.' '{print $1}')
+green "Serv00服务器名称：$snb"
 green "当前可选择的IP如下："
 cat $WORKDIR/ip.txt
 echo
 if [[ -e $WORKDIR/list.txt ]]; then
-green "已安装sing-box" 
+green "已安装sing-box"
+ps aux | grep '[c]onfig' > /dev/null && green "主进程启动正常" || red "主进程未启动，请卸载后重装脚本"
+if [ -f "$WORKDIR/boot.log" ] && grep -q "trycloudflare.com" "$WORKDIR/boot.log" 2>/dev/null && ps aux | grep [l]ocalhost > /dev/null; then
+green "当前Argo临时域名：$(grep -oE 'https://[[:alnum:]+\.-]+\.trycloudflare\.com' $WORKDIR/boot.log 2>/dev/null | sed 's@https://@@')"
+elif ps aux | grep [t]oken > /dev/null; then
+green "当前Argo固定域名：$(cat $WORKDIR/gdym.log 2>/dev/null)"
+fi
+if ! crontab -l 2>/dev/null | grep -q 'serv00keep'; then
+if [ -f "$WORKDIR/boot.log" ] || grep -q "trycloudflare.com" "$WORKDIR/boot.log" 2>/dev/null; then
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [l]ocalhost > /dev/null"
+else
+check_process="! ps aux | grep '[c]onfig' > /dev/null || ! ps aux | grep [t]oken > /dev/null"
+fi
+(crontab -l 2>/dev/null; echo "*/2 * * * * if $check_process; then /bin/bash ${WORKDIR}/serv00keep.sh; fi") | crontab -
+yellow "Cron保活丢失？已修复成功"
+else
+green "Cron保活运行正常"
+fi
 else
 red "未安装sing-box，请选择 1 进行安装" 
 fi
-   echo   "======================================================"
+   echo   "========================================================="
    reading "请输入选择【0-5】: " choice
    echo ""
     case "${choice}" in
